@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  # 后端服务
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-sqlite:///./soulmatch.db}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - JWT_SECRET=${JWT_SECRET:-dev-secret-key-change-in-production}
+      - DEBUG=${DEBUG:-false}
+      - CORS_ORIGINS=${CORS_ORIGINS:-["http://localhost","http://127.0.0.1"]}
+      # AI 配置
+      - AI_PROVIDER=${AI_PROVIDER:-ollama}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:7b}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - SILICONFLOW_API_KEY=${SILICONFLOW_API_KEY:-}
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - ./soulmatch_data:/app/data
+    depends_on:
+      - redis
+      - ollama
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Ollama AI 推理服务
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    restart: unless-stopped
+    # GPU 支持（可选，有 NVIDIA GPU 时启用）
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  # 前端服务
+  frontend:
+    build:
+      context: ./frontend/web
+      dockerfile: Dockerfile
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # Redis 缓存
+  redis:
+    image: redis:6-alpine
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+  ollama_data:
