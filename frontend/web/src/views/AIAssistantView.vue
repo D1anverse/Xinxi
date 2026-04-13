@@ -92,9 +92,14 @@
                           匹配度: <strong>{{ Math.round(user.match_score * 100) }}%</strong>
                         </p>
                       </div>
-                      <button @click="viewProfile(user.id)" class="view-profile-btn">
-                        查看
-                      </button>
+                      <div class="card-actions">
+                        <button @click="viewProfile(user.id)" class="view-profile-btn">
+                          查看
+                        </button>
+                        <button @click="startChat(user.id)" class="chat-btn">
+                          聊天
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -237,6 +242,11 @@ const sendQuickMessage = (text) => {
 // 查看用户资料
 const viewProfile = (userId) => {
   router.push(`/profile/${userId}`)
+}
+
+// 发起聊天
+const startChat = (userId) => {
+  router.push(`/chat/${userId}`)
 }
 
 // 发送消息
@@ -686,6 +696,22 @@ onMounted(async () => {
 .view-profile-btn {
   padding: 6px 12px;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border: none;
+  border-radius: 16px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.chat-btn {
+  padding: 6px 12px;
+  background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
   color: white;
   border: none;
   border-radius: 16px;

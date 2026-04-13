@@ -1363,14 +1363,14 @@ async def get_chat_suggestion(
         user_personality = get_personality_desc(current_user['personality_score'])
         target_personality = get_personality_desc(target_user['personality_score'])
         
-        # 构建请求
+        # 构建请求 - 修复 None 值问题
         ai_request = ChatSuggestionRequest(
             user_id=user_id,
             user_nickname=current_user['nickname'] if current_user else "我",
-            user_gender=current_user.get('gender', ''),
-            user_city=current_user.get('city', ''),
-            user_university=current_user.get('university_short') or current_user.get('university_name', ''),
-            user_bio=current_user.get('bio', ''),
+            user_gender=current_user.get('gender') or '',
+            user_city=current_user.get('city') or '',
+            user_university=current_user.get('university_short') or current_user.get('university_name') or '',
+            user_bio=current_user.get('bio') or '',
             user_tags=list(user_tags),
             user_personality=user_personality,
             user_dimension_scores={
@@ -1380,10 +1380,10 @@ async def get_chat_suggestion(
                 'lifestyle': float(current_user['lifestyle_score']) if current_user['lifestyle_score'] else None,
             },
             target_nickname=target_user['nickname'] if target_user else "对方",
-            target_gender=target_user.get('gender', ''),
-            target_city=target_user.get('city', ''),
-            target_university=target_user.get('university_short') or target_user.get('university_name', ''),
-            target_bio=target_user.get('bio', ''),
+            target_gender=target_user.get('gender') or '',
+            target_city=target_user.get('city') or '',
+            target_university=target_user.get('university_short') or target_user.get('university_name') or '',
+            target_bio=target_user.get('bio') or '',
             target_tags=list(target_tags),
             target_personality=target_personality,
             target_dimension_scores={
@@ -1498,98 +1498,98 @@ async def ai_assistant(
     destinations = []
     
     if mode == "search" and single_message:
-        # 解析用户想要寻找的类型
-        search_prompt = f"""分析用户的交友需求，提取关键标签。
+        # 使用 AI 提取搜索关键词
+        search_prompt = f"""分析用户的交友需求，从输入中提取关键词。
 
 用户输入: {single_message}
 
-请返回一个JSON格式的搜索条件：
+请返回一个JSON（只返回JSON，不要其他内容）：
 {{
-    "search_tags": ["标签1", "标签2"],
-    "preferred_gender": "male/female/any",
-    "description": "用户需求的简要描述"
-}}
-
-只返回JSON，不要其他内容。"""
+    "search_tags": ["提取的标签1", "提取的标签2"],
+    "preferred_gender": "male/female/any"
+}}"""
         
         try:
             ai_service = get_ai_service()
             analysis = await ai_service.chat([{"role": "user", "content": search_prompt}])
             
-            # 解析JSON
+            # 解析 JSON
             import re
             json_match = re.search(r'\{[\s\S]*\}', analysis)
+            search_tags = []
+            preferred_gender = "any"
+            
             if json_match:
                 search_params = json.loads(json_match.group())
                 search_tags = search_params.get("search_tags", [])
                 preferred_gender = search_params.get("preferred_gender", "any")
-                description = search_params.get("description", "")
-                
-                # 查询匹配的用户
-                gender_filter = ""
-                if preferred_gender == "male":
-                    gender_filter = "AND u.gender = 'male'"
-                elif preferred_gender == "female":
-                    gender_filter = "AND u.gender = 'female'"
-                
-                # 构建标签搜索条件
-                tag_conditions = ""
-                if search_tags:
-                    tag_placeholders = []
-                    for i, tag in enumerate(search_tags[:5]):
-                        tag_placeholders.append(f"${i+2}")
-                    tag_conditions = f"AND (uv.tags && ARRAY[{', '.join(tag_placeholders)}]::text[] OR up.custom_tags && ARRAY[{', '.join(tag_placeholders)}]::text[])"
-                
-                query = f"""
-                    SELECT DISTINCT u.id, u.nickname, u.gender, u.city,
-                           COALESCE(uv.tags, '{{}}') as tags,
-                           COALESCE(up.custom_tags, '{{}}') as custom_tags,
-                           COALESCE(up.bio, '') as bio,
-                           up.avatar_url,
-                           -- 计算匹配分数
-                           (
-                               CASE WHEN uv.tags && $2::text[] THEN 0.3 ELSE 0 END +
-                               CASE WHEN up.custom_tags && $2::text[] THEN 0.2 ELSE 0 END +
-                               CASE WHEN u.gender = $3 THEN 0.2 ELSE 0 END +
-                               CASE WHEN u.city IS NOT NULL THEN 0.1 ELSE 0 END +
-                               COALESCE(uv.interests_score, 3.0) / 25.0
-                           ) as match_score
-                    FROM users u
-                    LEFT JOIN user_values uv ON u.id = uv.user_id
-                    LEFT JOIN user_profiles up ON u.id = up.user_id
-                    WHERE u.id != $1::uuid
-                      AND u.status = 'active'
-                      {gender_filter}
-                      {tag_conditions}
-                    ORDER BY match_score DESC
-                    LIMIT 5
-                """
-                
-                params = [user_id, search_tags, preferred_gender if preferred_gender != "any" else None]
-                search_results = await conn.fetch(query, *params)
-                
-                for r in search_results:
-                    user_all_tags = list(set(list(r['tags'] or []) + list(r['custom_tags'] or [])))
-                    recommended_users.append({
-                        "id": str(r['id']),
-                        "nickname": r['nickname'],
-                        "gender": r['gender'],
-                        "city": r['city'],
-                        "tags": user_all_tags[:5],
-                        "bio": r['bio'][:100] if r['bio'] else "",
-                        "avatar": r['avatar_url'],
-                        "match_score": float(r['match_score']) if r['match_score'] else 0
-                    })
-                
-                # 如果没有找到结果，使用AI生成回复
-                if not recommended_users:
-                    pass  # 继续用AI回复
-                    
+            
+            # 构建数据库查询
+            gender_filter = ""
+            if preferred_gender == "male":
+                gender_filter = "AND u.gender = 'male'"
+            elif preferred_gender == "female":
+                gender_filter = "AND u.gender = 'female'"
+            
+            # 构建标签搜索条件 - 使用 OR 条件连接
+            tag_conditions = ""
+            if search_tags:
+                # 为每个搜索标签创建 OR 条件（模糊匹配）
+                tag_conditions_list = []
+                for i, tag in enumerate(search_tags[:5]):
+                    idx = i + 2
+                    tag_conditions_list.append(
+                        f"(SELECT COUNT(*) FROM unnest(COALESCE(uv.tags, ARRAY[]::text[])) AS t WHERE t ILIKE '%' || ${idx} || '%') > 0"
+                    )
+                    tag_conditions_list.append(
+                        f"(SELECT COUNT(*) FROM unnest(COALESCE(up.custom_tags, ARRAY[]::text[])) AS t WHERE t ILIKE '%' || ${idx} || '%') > 0"
+                    )
+                tag_conditions = "AND (" + " OR ".join(tag_conditions_list) + ")"
+            
+            query = f"""
+                SELECT u.id, u.nickname, u.gender, u.city,
+                       COALESCE(uv.tags, ARRAY[]::text[]) as tags,
+                       COALESCE(up.custom_tags, ARRAY[]::text[]) as custom_tags,
+                       COALESCE(up.bio, '') as bio,
+                       up.avatar_url,
+                       COALESCE(uv.personality_score, 3.0) as personality_score
+                FROM users u
+                LEFT JOIN user_values uv ON u.id = uv.user_id
+                LEFT JOIN user_profiles up ON u.id = up.user_id
+                WHERE u.id != $1::uuid
+                  AND u.status = 'active'
+                  {gender_filter}
+                  {tag_conditions}
+                LIMIT 10
+            """
+            
+            # 构建查询参数
+            query_params = [user_id] + search_tags[:5]
+            
+            # 执行查询
+            search_pool = await get_pool()
+            async with search_pool.acquire() as search_conn:
+                search_results = await search_conn.fetch(query, *query_params)
+            
+            # 整理结果
+            for r in search_results:
+                user_all_tags = list(set(list(r['tags'] or []) + list(r['custom_tags'] or [])))
+                recommended_users.append({
+                    "id": str(r['id']),
+                    "nickname": r['nickname'],
+                    "gender": r['gender'] or "",
+                    "city": r['city'] or "",
+                    "tags": user_all_tags[:5],
+                    "bio": (r['bio'][:100] if r['bio'] else ""),
+                    "avatar": r['avatar_url'],
+                    "personality": float(r['personality_score']) if r['personality_score'] else 0
+                })
+                        
         except Exception as e:
             print(f"Search error: {e}")
     
     elif mode == "destination" and single_message:
-        # 目的地推荐模式 - 使用本地数据库
+        # 目的地推荐模式 - 直接使用本地数据库，不调用 AI
         from backend.destination_database import search_destinations, get_destinations
         
         user_city = user_info.get('city') if user_info else None
@@ -1599,7 +1599,6 @@ async def ai_assistant(
         
         # 如果用户城市有特定推荐，优先展示
         if not destinations and user_city:
-            # 尝试用通用关键词搜索
             destinations = search_destinations("约会", city=user_city, limit=6)
         
         # 如果还是没有结果，返回该城市的所有地点
@@ -1610,6 +1609,29 @@ async def ai_assistant(
                 p_copy["description"] = p_copy.pop("tips", "")
                 p_copy["tags"] = [p_copy.pop("type", "")]
                 destinations.append(p_copy)
+        
+        # 直接返回结果，不需要 AI 参与
+        formatted_destinations = []
+        for d in destinations:
+            formatted_destinations.append({
+                "name": d.get("name", ""),
+                "description": d.get("tips", d.get("description", "")),
+                "address": d.get("address", d.get("city", "")),
+                "price": d.get("price", ""),
+                "tags": [d.get("type", "")] if d.get("type") else [],
+                "city": d.get("city", "")
+            })
+        
+        return {
+            "success": True,
+            "data": {
+                "response": f"为你推荐 {len(formatted_destinations)} 个约会地点" if formatted_destinations else "抱歉，没有找到符合条件的地点",
+                "suggestions": [],
+                "actionData": {"type": "destinations", "items": formatted_destinations},
+                "recommended_users": [],
+                "destinations": formatted_destinations
+            }
+        }
     
     # 构建消息列表（支持单条消息）
     if single_message and not messages:
@@ -1640,10 +1662,6 @@ async def ai_assistant(
     ai_service = get_ai_service()
     result = await ai_service.assistant(ai_request)
     
-    # 如果是搜索模式且没有推荐用户，添加默认回复
-    if mode == "search" and not recommended_users and result.response:
-        recommended_users = []
-    
     # 格式化目的地数据
     formatted_destinations = []
     for d in destinations:
@@ -1656,12 +1674,36 @@ async def ai_assistant(
             "city": d.get("city", "")
         })
     
+    # 搜索模式：简化响应
+    if mode == "search":
+        if recommended_users:
+            user_names = [u["nickname"] for u in recommended_users]
+            response_text = "找到以下用户：" + "、".join(user_names)
+        else:
+            response_text = "抱歉，没找到符合条件的人"
+        return {
+            "success": True,
+            "data": {
+                "response": response_text,
+                "suggestions": [],
+                "actionData": {},
+                "recommended_users": recommended_users,
+                "destinations": []
+            }
+        }
+    
+    # 处理 schedule 模式 - 提取结构化日程数据
+    action_data = result.action_data
+    if mode == "schedule" and formatted_destinations:
+        # 如果有目的地数据，也加入 action_data
+        action_data["destinations"] = formatted_destinations
+    
     return {
         "success": True,
         "data": {
             "response": result.response,
             "suggestions": result.suggestions,
-            "actionData": result.action_data,
+            "actionData": action_data,
             "recommended_users": recommended_users,
             "destinations": formatted_destinations
         }

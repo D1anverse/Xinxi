@@ -105,7 +105,7 @@ class AssistantRequest(BaseModel):
     user_tags: List[str] = []
     user_values: Dict[str, float] = {}  # 问卷各维度得分
     messages: List[AssistantMessage]
-    mode: Literal["chat", "schedule", "search", "advice"] = "chat"
+    mode: Literal["chat", "schedule", "search", "advice", "destination"] = "chat"
 
 
 class AssistantResponse(BaseModel):
@@ -188,16 +188,25 @@ class AIService:
         else:
             full_messages = messages
         
+        if self._client is None:
+            raise ConnectionError(
+                f"AI client not initialized. Provider: {self.provider}, "
+                f"Base URL: {AIConfig.OLLAMA_BASE_URL if self.provider == AIConfig.PROVIDER_OLLAMA else 'N/A'}"
+            )
+        
         try:
+            logger.info(f"Calling AI: provider={self.provider}, model={self._model}, base_url={self._client.base_url}")
             response = self._client.chat.completions.create(
                 model=self._model,
                 messages=full_messages,
                 temperature=temperature or AIConfig.TEMPERATURE,
                 max_tokens=AIConfig.MAX_TOKENS
             )
+            logger.info(f"AI response received: {len(response.choices[0].message.content)} chars")
             return response.choices[0].message.content
         except Exception as e:
-            logger.error(f"AI chat error: {e}")
+            logger.error(f"AI chat error: {type(e).__name__}: {e}")
+            logger.error(f"AI Config - Provider: {self.provider}, Model: {self._model}, Base URL: {AIConfig.OLLAMA_BASE_URL}")
             raise
     
     # ============================================
@@ -292,14 +301,24 @@ class AIService:
                 reason="，".join(reason_parts)
             )
         except Exception as e:
-            logger.error(f"Get chat suggestions error: {e}")
+            logger.error(f"Get chat suggestions error: {type(e).__name__}: {e}")
+            logger.error(f"AI诊断 - Provider: {AIConfig.DEFAULT_PROVIDER}, Model: {AIConfig.OLLAMA_MODEL}, Base URL: {AIConfig.OLLAMA_BASE_URL}")
+            
+            # 生成更有意义的后备建议，而不是硬编码回复
+            fallback_suggestions = []
+            if request.common_interests:
+                fallback_suggestions.append(f"看你也喜欢{request.common_interests[0]}，有机会一起体验呀~")
+            else:
+                fallback_suggestions.append("最近有什么有趣的经历吗？")
+            
+            fallback_suggestions.extend([
+                "今天有什么有趣的事吗？最近在忙什么？",
+                "感觉我们还挺有默契的，你觉得呢？"
+            ])
+            
             return ChatSuggestionResponse(
-                suggestions=[
-                    f"看你也喜欢{request.common_interests[0] if request.common_interests else 'xxx'}，有机会一起体验呀~",
-                    "今天有什么有趣的事吗？最近在忙什么？",
-                    "感觉我们还挺有默契的，你觉得呢？"
-                ],
-                reason="使用默认建议"
+                suggestions=fallback_suggestions,
+                reason=f"AI服务暂时不可用 ({type(e).__name__})，使用基础建议"
             )
     
     async def match_tags(self, request: TagMatchRequest) -> TagMatchResponse:
@@ -406,36 +425,26 @@ class AIService:
 请根据用户的问题给出温暖、实用的回答。""",
 
             "schedule": """你是 SoulMatch 的约会规划助手"小 SOUL"。
+用户想要一个约会/日程安排。
 
-【你的能力】
-1. 约会安排：帮用户规划完美的约会行程
-2. 学习计划：制定学习目标和计划
-3. 运动安排：制定健身、运动计划
-4. 异地恋维持：给出维系异地恋的建议
+请用简洁的中文回复，给出具体的时间安排，不要返回任何标签或JSON格式。
 
-【输出格式建议】
-- 简洁的回复
-- 可选包含日程JSON：{{"type": "schedule", "items": [{{"time": "时间", "activity": "活动", "note": "备注"}}]}}
+例如回复：
+"为你安排了一个约会日程：
+上午10点：一起吃早餐，选择一家安静的咖啡厅
+中午12点：在公园散步聊天
+下午2点：去看一场电影
+晚上6点：共进晚餐"
 
-请帮用户规划具体的日程安排，要有创意和实用性！""",
+请直接给出你的约会安排建议。""",
 
-            "destination": """你是 SoulMatch 的约会目的地推荐专家"小 SOUL"。
+            "destination": """你是 SoulMatch 的约会目的地推荐助手"小 SOUL"。
+用户想要找约会地点。
 
-【你的能力】
-根据用户的约会需求推荐合适的地点：
-1. 室内约会：咖啡厅、桌游店、密室逃脱、电玩城...
-2. 户外活动：公园、爬山、骑行、海边...
-3. 文艺场所：博物馆、美术馆、书店、展览...
-4. 美食探索：特色餐厅、小吃街、夜市...
-5. 娱乐活动：演唱会、电影、戏剧、游戏厅...
+请只返回一个JSON，不要其他内容：
+{{"type": "destination", "items": [{{"name": "地点名称", "reason": "推荐理由"}}]}}
 
-【推荐格式】
-- 地点名称
-- 推荐理由（为什么适合约会）
-- 适合的人群/场景
-- 小贴士
-
-请给出3-5个创意又实用的约会地点推荐！""",
+最多5个地点推荐。""",
 
             "search": """你是 SoulMatch 的智能红娘助手"小 SOUL"。
 
@@ -503,10 +512,13 @@ class AIService:
                 action_data=action_data
             )
         except Exception as e:
-            logger.error(f"Assistant error: {e}")
+            logger.error(f"Assistant error: {type(e).__name__}: {e}")
+            logger.error(f"AI诊断 - Provider: {AIConfig.DEFAULT_PROVIDER}, Model: {AIConfig.OLLAMA_MODEL}, Base URL: {AIConfig.OLLAMA_BASE_URL}")
+            
+            # 返回错误信息而不是硬编码回复，让前端决定如何处理
             return AssistantResponse(
-                response="抱歉，小 SOUL 暂时有点困了，请稍后再试~ 🌙",
-                suggestions=["换个问题试试？", "稍后再来找我聊天吧~"]
+                response=f"⚠️ AI服务连接失败\n\n请检查以下配置：\n1. Ollama服务是否运行: `ollama serve`\n2. 模型是否已下载: `ollama list`\n3. 错误详情: {type(e).__name__}: {str(e)[:100]}",
+                suggestions=["稍后再试", "检查Ollama服务状态"]
             )
 
 
